@@ -1,6 +1,6 @@
-use actix_web::{get, post, web, HttpResponse};
+use actix_web::{get, put, post, delete, web, HttpResponse};
 use futures::stream::StreamExt;
-use mongodb::{bson::{doc, oid::ObjectId}, Client, Collection};
+use mongodb::{bson::{doc, oid::ObjectId, to_bson}, Client, Collection};
 
 use crate::model::user::User;
 
@@ -50,12 +50,45 @@ async fn get_user(client: web::Data<Client>, id: web::Path<String>) -> HttpRespo
     }
 }
 
+#[delete("/{id}")]
+async fn remove_user(client: web::Data<Client>, id: web::Path<String>) -> HttpResponse {
+    let collection: Collection<User> = client.database(DB_NAME).collection(COLL_NAME);
+    let object_id = ObjectId::parse_str(id.to_string()).expect("invalid id");
+    let result = collection.find_one_and_delete(doc! { "_id": object_id }, None).await;
+
+    match result {
+        Ok(Some(response)) => HttpResponse::Ok().json(response),
+        Ok(None) => HttpResponse::NotFound().body("user not found"),
+        Err(err) => HttpResponse::InternalServerError().body(err.to_string())
+    }
+}
+
+#[put("/{id}")]
+async fn update_user(client: web::Data<Client>, id: web::Path<String>, body: web::Json<User>) -> HttpResponse {
+    let collection: Collection<User> = client.database(DB_NAME).collection(COLL_NAME);
+    let object_id = ObjectId::parse_str(id.to_string()).expect("invalid id");
+
+    let user_bson = to_bson(&User { ..body.into_inner() }).expect("error");
+    let update = doc! { "$set" : user_bson };
+
+    let result = collection.find_one_and_update(doc! { "_id": object_id }, update, None).await;
+
+    match result {
+        Ok(Some(user)) => HttpResponse::Ok().json(user),
+        Ok(None) => {
+            HttpResponse::NotFound().body("No user found")
+        }
+        Err(err) => HttpResponse::InternalServerError().body(err.to_string()),
+    }
+}
 
 pub fn routes(conf: &mut web::ServiceConfig) {
     let scope = web::scope("/api")
         .service(add_user)
         .service(get_all_user)
-        .service(get_user);
+        .service(get_user)
+        .service(update_user)
+        .service(remove_user);
 
     conf.service(scope);
 }
